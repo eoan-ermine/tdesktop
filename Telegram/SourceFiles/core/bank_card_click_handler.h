@@ -11,7 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Main {
 class Session;
-} // namespace Main
+} // namespace Main 
 
 class BankCardClickHandler : public ClickHandler {
 public:
