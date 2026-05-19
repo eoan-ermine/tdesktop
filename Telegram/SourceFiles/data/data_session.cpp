@@ -84,6 +84,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "base/unixtime.h"
 #include "base/call_delayed.h"
+#include "base/options.h"
 #include "base/random.h"
 #include "spellcheck/spellcheck_highlight_syntax.h"
 
@@ -91,8 +92,61 @@ namespace Data {
 namespace {
 
 constexpr auto kNextForUpgradeGiftTimeout = 5 * crl::time(1000);
+base::options::option<QString> OptionDialogsAllowedChatsFile({
+	.id = "dialogs-allowed-chats-file",
+	.name = "Dialogs allowed chats file",
+	.description = "Path to file with chat IDs shown in dialogs list."
+		" One id per line.",
+});
 
 using ViewElement = HistoryView::Element;
+
+[[nodiscard]] bool AddDialogsAllowedChatId(
+		const QString &line,
+		base::flat_set<uint64> &bareChatIds,
+		base::flat_set<uint64> &peerIds) {
+	auto signedParseSucceeded = false;
+	const auto signedValue = line.toLongLong(&signedParseSucceeded, 10);
+	if (signedParseSucceeded) {
+		if (signedValue > 0) {
+			bareChatIds.emplace(uint64(signedValue));
+			return true;
+		} else if (signedValue < 0) {
+			if (line.startsWith(u"-100"_q)) {
+				auto channelParseSucceeded = false;
+				const auto channelId = line.mid(4).toULongLong(
+					&channelParseSucceeded,
+					10);
+				if (channelParseSucceeded && channelId) {
+					bareChatIds.emplace(channelId);
+					return true;
+				}
+				return false;
+			}
+			auto magnitudeParseSucceeded = false;
+			const auto bareValue = line.mid(1).toULongLong(
+				&magnitudeParseSucceeded,
+				10);
+			if (magnitudeParseSucceeded && bareValue) {
+				bareChatIds.emplace(bareValue);
+				return true;
+			}
+			return false;
+		}
+		return false;
+	}
+	auto unsignedParseSucceeded = false;
+	const auto value = line.toULongLong(&unsignedParseSucceeded, 10);
+	if (!unsignedParseSucceeded || !value) {
+		return false;
+	}
+	if (value > PeerId::kChatTypeMask) {
+		peerIds.emplace(value);
+	} else {
+		bareChatIds.emplace(value);
+	}
+	return true;
+}
 
 // s: box 100x100
 // m: box 320x320
@@ -264,6 +318,7 @@ Session::Session(not_null<Main::Session*> session)
 , _shortcutMessages(std::make_unique<ShortcutMessages>(this)) {
 	_cache->open(_session->local().cacheKey());
 	_bigFileCache->open(_session->local().cacheBigFileKey());
+	loadDialogsAllowedChatIds();
 
 	if constexpr (Platform::IsLinux()) {
 		const auto wasVersion = _session->local().oldMapVersion();
@@ -5218,6 +5273,10 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 	const auto entry = key.entry();
 	const auto history = entry->asHistory();
 	const auto topic = entry->asTopic();
+	if (!isDialogsEntryAllowed(entry)) {
+		removeDialogsEntryFromChatLists(key);
+		return;
+	}
 	const auto mainList = chatsListFor(entry);
 	auto event = ChatListEntryRefresh{ .key = key };
 	const auto creating = event.existenceChanged = !entry->inChatList();
@@ -5274,6 +5333,93 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 		//		broadcast->updateFull();
 		//	}
 		//}
+	}
+}
+
+bool Session::isDialogsEntryAllowed(not_null<Dialogs::Entry*> entry) const {
+	if (!_dialogsAllowedIdsEnabled) {
+		return true;
+	}
+	const auto history = entry->asHistory();
+	if (!history) {
+		return true;
+	}
+	const auto peerId = history->peer->id.value;
+	const auto bareId = uint64(peerToBareMTPInt(history->peer->id).v);
+	return _dialogsAllowedPeerIds.contains(peerId)
+		|| _dialogsAllowedBareChatIds.contains(bareId);
+}
+
+void Session::removeDialogsEntryFromChatLists(Dialogs::Key key) {
+	using namespace Dialogs;
+
+	const auto entry = key.entry();
+	if (!entry->inChatList()) {
+		return;
+	}
+	for (const auto &filter : _chatsFilters->list()) {
+		const auto id = filter.id();
+		if (id && entry->inChatList(id)) {
+			entry->removeFromChatList(id, chatsFilters().chatsList(id));
+			_chatListEntryRefreshes.fire(ChatListEntryRefresh{
+				.key = key,
+				.filterId = id,
+				.existenceChanged = true,
+			});
+		}
+	}
+	entry->removeFromChatList(0, chatsListFor(entry));
+	_chatListEntryRefreshes.fire(ChatListEntryRefresh{
+		.key = key,
+		.existenceChanged = true,
+	});
+	if (_contactsList.contains(key) && !_contactsNoChatsList.contains(key)) {
+		_contactsNoChatsList.addByName(key);
+	}
+}
+
+void Session::loadDialogsAllowedChatIds() {
+	_dialogsAllowedBareChatIds.clear();
+	_dialogsAllowedPeerIds.clear();
+	_dialogsAllowedIdsEnabled = false;
+	const auto configuredPath = OptionDialogsAllowedChatsFile.value().trimmed();
+	if (configuredPath.isEmpty()) {
+		return;
+	}
+	auto path = configuredPath;
+	if (QDir::isRelativePath(path)) {
+		path = QDir(cWorkingDir()).filePath(path);
+	}
+	auto file = QFile(path);
+	if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		LOG(("Dialogs allowed chats file: failed to open '%1'"
+			" (check that it exists and is readable).").arg(path));
+		return;
+	}
+	auto fileStream = QTextStream(&file);
+	auto invalidCount = 0;
+	while (!fileStream.atEnd()) {
+		const auto line = fileStream.readLine().trimmed();
+		if (line.isEmpty() || line.startsWith(u"#"_q)) {
+			continue;
+		}
+		if (!AddDialogsAllowedChatId(
+			line,
+			_dialogsAllowedBareChatIds,
+			_dialogsAllowedPeerIds)) {
+			++invalidCount;
+		}
+	}
+	if (invalidCount > 0) {
+		LOG(("Dialogs allowed chats file: skipped %1 invalid IDs from '%2'.").arg(
+			invalidCount
+		).arg(path));
+	}
+	_dialogsAllowedIdsEnabled = !_dialogsAllowedBareChatIds.empty()
+		|| !_dialogsAllowedPeerIds.empty();
+	if (!_dialogsAllowedIdsEnabled) {
+		LOG(("Dialogs allowed chats file: no valid IDs loaded from '%1'.").arg(
+			path));
 	}
 }
 
