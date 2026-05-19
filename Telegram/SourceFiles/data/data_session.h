@@ -908,6 +908,10 @@ public:
 		Folder *folder = nullptr) const;
 	[[nodiscard]] not_null<Dialogs::IndexedList*> contactsList();
 	[[nodiscard]] not_null<Dialogs::IndexedList*> contactsNoChatsList();
+	[[nodiscard]] bool isDialogsEntryAllowed(
+		not_null<Dialogs::Entry*> entry) const;
+	void removeDialogsEntryFromChatLists(Dialogs::Key key);
+	void loadDialogsVisibleChatIds();
 
 	struct ChatListEntryRefresh {
 		Dialogs::Key key;
@@ -1203,6 +1207,9 @@ private:
 	Dialogs::MainList _chatsList;
 	Dialogs::IndexedList _contactsList;
 	Dialogs::IndexedList _contactsNoChatsList;
+	base::flat_set<uint64> _dialogsVisibleBareChatIds;
+	base::flat_set<uint64> _dialogsVisiblePeerIds;
+	bool _dialogsVisibleIdsEnabled = false;
 
 	MsgId _localMessageIdCounter = StartClientMsgId;
 	std::unordered_map<PeerId, Messages> _messages;

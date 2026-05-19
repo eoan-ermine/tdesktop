@@ -84,6 +84,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "base/unixtime.h"
 #include "base/call_delayed.h"
+#include "base/options.h"
 #include "base/random.h"
 #include "spellcheck/spellcheck_highlight_syntax.h"
 
@@ -91,8 +92,53 @@ namespace Data {
 namespace {
 
 constexpr auto kNextForUpgradeGiftTimeout = 5 * crl::time(1000);
+base::options::option<QString> OptionDialogsVisibleChatsFile({
+	.id = "dialogs-visible-chats-file",
+	.name = "Dialogs visible chats file",
+	.description = "Path to file with chat ids shown in dialogs list."
+		" One id per line.",
+});
 
 using ViewElement = HistoryView::Element;
+
+void AddDialogsVisibleChatId(
+		const QString &line,
+		base::flat_set<uint64> &bare,
+		base::flat_set<uint64> &peer) {
+	if (line.isEmpty() || line.startsWith(u'#')) {
+		return;
+	}
+	auto ok = false;
+	const auto signedValue = line.toLongLong(&ok, 10);
+	if (ok) {
+		if (signedValue > 0) {
+			bare.emplace(uint64(signedValue));
+			return;
+		} else if (signedValue < 0) {
+			if (line.startsWith(u"-100"_q)) {
+				const auto channelId = line.mid(4).toULongLong(&ok, 10);
+				if (ok && channelId) {
+					bare.emplace(channelId);
+				}
+				return;
+			}
+			const auto bareValue = line.mid(1).toULongLong(&ok, 10);
+			if (ok && bareValue) {
+				bare.emplace(bareValue);
+			}
+			return;
+		}
+	}
+	const auto value = line.toULongLong(&ok, 10);
+	if (!ok || !value) {
+		return;
+	}
+	if (value > PeerId::kChatTypeMask) {
+		peer.emplace(value);
+	} else {
+		bare.emplace(value);
+	}
+}
 
 // s: box 100x100
 // m: box 320x320
@@ -264,6 +310,7 @@ Session::Session(not_null<Main::Session*> session)
 , _shortcutMessages(std::make_unique<ShortcutMessages>(this)) {
 	_cache->open(_session->local().cacheKey());
 	_bigFileCache->open(_session->local().cacheBigFileKey());
+	loadDialogsVisibleChatIds();
 
 	if constexpr (Platform::IsLinux()) {
 		const auto wasVersion = _session->local().oldMapVersion();
@@ -5218,6 +5265,10 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 	const auto entry = key.entry();
 	const auto history = entry->asHistory();
 	const auto topic = entry->asTopic();
+	if (!isDialogsEntryAllowed(entry)) {
+		removeDialogsEntryFromChatLists(key);
+		return;
+	}
 	const auto mainList = chatsListFor(entry);
 	auto event = ChatListEntryRefresh{ .key = key };
 	const auto creating = event.existenceChanged = !entry->inChatList();
@@ -5275,6 +5326,75 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 		//	}
 		//}
 	}
+}
+
+bool Session::isDialogsEntryAllowed(not_null<Dialogs::Entry*> entry) const {
+	if (!_dialogsVisibleIdsEnabled) {
+		return true;
+	}
+	const auto history = entry->asHistory();
+	if (!history) {
+		return true;
+	}
+	const auto peerId = history->peer->id.value;
+	const auto bareId = (peerId & PeerId::kChatTypeMask);
+	return _dialogsVisiblePeerIds.contains(peerId)
+		|| _dialogsVisibleBareChatIds.contains(bareId);
+}
+
+void Session::removeDialogsEntryFromChatLists(Dialogs::Key key) {
+	using namespace Dialogs;
+
+	const auto entry = key.entry();
+	if (!entry->inChatList()) {
+		return;
+	}
+	for (const auto &filter : _chatsFilters->list()) {
+		const auto id = filter.id();
+		if (id && entry->inChatList(id)) {
+			entry->removeFromChatList(id, chatsFilters().chatsList(id));
+			_chatListEntryRefreshes.fire(ChatListEntryRefresh{
+				.key = key,
+				.filterId = id,
+				.existenceChanged = true,
+			});
+		}
+	}
+	entry->removeFromChatList(0, chatsListFor(entry));
+	_chatListEntryRefreshes.fire(ChatListEntryRefresh{
+		.key = key,
+		.existenceChanged = true,
+	});
+	if (_contactsList.contains(key) && !_contactsNoChatsList.contains(key)) {
+		_contactsNoChatsList.addByName(key);
+	}
+}
+
+void Session::loadDialogsVisibleChatIds() {
+	_dialogsVisibleBareChatIds.clear();
+	_dialogsVisiblePeerIds.clear();
+	_dialogsVisibleIdsEnabled = false;
+	const auto configured = OptionDialogsVisibleChatsFile.value().trimmed();
+	if (configured.isEmpty()) {
+		return;
+	}
+	auto path = configured;
+	if (QDir::isRelativePath(path)) {
+		path = cWorkingDir() + path;
+	}
+	auto file = QFile(path);
+	if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		return;
+	}
+	auto stream = QTextStream(&file);
+	while (!stream.atEnd()) {
+		AddDialogsVisibleChatId(
+			stream.readLine().trimmed(),
+			_dialogsVisibleBareChatIds,
+			_dialogsVisiblePeerIds);
+	}
+	_dialogsVisibleIdsEnabled = !_dialogsVisibleBareChatIds.empty()
+		|| !_dialogsVisiblePeerIds.empty();
 }
 
 void Session::removeChatListEntry(Dialogs::Key key) {
