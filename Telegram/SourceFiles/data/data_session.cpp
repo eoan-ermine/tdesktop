@@ -133,6 +133,7 @@ using ViewElement = HistoryView::Element;
 			}
 			return false;
 		}
+		return false;
 	}
 	auto unsignedParseSucceeded = false;
 	const auto value = line.toULongLong(&unsignedParseSucceeded, 10);
@@ -5409,12 +5410,16 @@ void Session::loadDialogsAllowedChatIds() {
 		}
 	}
 	if (invalidCount > 0) {
-		LOG(("Dialogs allowlist: skipped %1 invalid ids from '%2'.").arg(
+		LOG(("Dialogs allowed chats file: skipped %1 invalid ids from '%2'.").arg(
 			invalidCount
 		).arg(path));
 	}
 	_dialogsAllowedIdsEnabled = !_dialogsAllowedBareChatIds.empty()
 		|| !_dialogsAllowedPeerIds.empty();
+	if (!_dialogsAllowedIdsEnabled) {
+		LOG(("Dialogs allowed chats file: no valid ids loaded from '%1'.").arg(
+			path));
+	}
 }
 
 void Session::removeChatListEntry(Dialogs::Key key) {
