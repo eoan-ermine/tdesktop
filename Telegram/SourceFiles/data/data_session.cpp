@@ -92,16 +92,16 @@ namespace Data {
 namespace {
 
 constexpr auto kNextForUpgradeGiftTimeout = 5 * crl::time(1000);
-base::options::option<QString> OptionDialogsVisibleChatsFile({
-	.id = "dialogs-visible-chats-file",
-	.name = "Dialogs visible chats file",
+base::options::option<QString> OptionDialogsAllowedChatsFile({
+	.id = "dialogs-allowed-chats-file",
+	.name = "Dialogs allowed chats file",
 	.description = "Path to file with chat ids shown in dialogs list."
 		" One id per line.",
 });
 
 using ViewElement = HistoryView::Element;
 
-	void AddDialogsVisibleChatId(
+void AddDialogsAllowedChatId(
 		const QString &line,
 		base::flat_set<uint64> &bare,
 		base::flat_set<uint64> &peer) {
@@ -310,7 +310,7 @@ Session::Session(not_null<Main::Session*> session)
 , _shortcutMessages(std::make_unique<ShortcutMessages>(this)) {
 	_cache->open(_session->local().cacheKey());
 	_bigFileCache->open(_session->local().cacheBigFileKey());
-	loadDialogsVisibleChatIds();
+	loadDialogsAllowedChatIds();
 
 	if constexpr (Platform::IsLinux()) {
 		const auto wasVersion = _session->local().oldMapVersion();
@@ -5329,7 +5329,7 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 }
 
 bool Session::isDialogsEntryAllowed(not_null<Dialogs::Entry*> entry) const {
-	if (!_dialogsVisibleIdsEnabled) {
+	if (!_dialogsAllowedIdsEnabled) {
 		return true;
 	}
 	const auto history = entry->asHistory();
@@ -5338,8 +5338,8 @@ bool Session::isDialogsEntryAllowed(not_null<Dialogs::Entry*> entry) const {
 	}
 	const auto peerId = history->peer->id.value;
 	const auto bareId = (peerId & PeerId::kChatTypeMask);
-	return _dialogsVisiblePeerIds.contains(peerId)
-		|| _dialogsVisibleBareChatIds.contains(bareId);
+	return _dialogsAllowedPeerIds.contains(peerId)
+		|| _dialogsAllowedBareChatIds.contains(bareId);
 }
 
 void Session::removeDialogsEntryFromChatLists(Dialogs::Key key) {
@@ -5370,11 +5370,11 @@ void Session::removeDialogsEntryFromChatLists(Dialogs::Key key) {
 	}
 }
 
-void Session::loadDialogsVisibleChatIds() {
-	_dialogsVisibleBareChatIds.clear();
-	_dialogsVisiblePeerIds.clear();
-	_dialogsVisibleIdsEnabled = false;
-	const auto configured = OptionDialogsVisibleChatsFile.value().trimmed();
+void Session::loadDialogsAllowedChatIds() {
+	_dialogsAllowedBareChatIds.clear();
+	_dialogsAllowedPeerIds.clear();
+	_dialogsAllowedIdsEnabled = false;
+	const auto configured = OptionDialogsAllowedChatsFile.value().trimmed();
 	if (configured.isEmpty()) {
 		return;
 	}
@@ -5388,13 +5388,13 @@ void Session::loadDialogsVisibleChatIds() {
 	}
 	auto stream = QTextStream(&file);
 	while (!stream.atEnd()) {
-		AddDialogsVisibleChatId(
+		AddDialogsAllowedChatId(
 			stream.readLine().trimmed(),
-			_dialogsVisibleBareChatIds,
-			_dialogsVisiblePeerIds);
+			_dialogsAllowedBareChatIds,
+			_dialogsAllowedPeerIds);
 	}
-	_dialogsVisibleIdsEnabled = !_dialogsVisibleBareChatIds.empty()
-		|| !_dialogsVisiblePeerIds.empty();
+	_dialogsAllowedIdsEnabled = !_dialogsAllowedBareChatIds.empty()
+		|| !_dialogsAllowedPeerIds.empty();
 }
 
 void Session::removeChatListEntry(Dialogs::Key key) {
