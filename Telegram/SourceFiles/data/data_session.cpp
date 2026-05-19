@@ -108,31 +108,38 @@ using ViewElement = HistoryView::Element;
 	if (line.isEmpty() || line.startsWith(u"#"_q)) {
 		return false;
 	}
-	auto ok = false;
-	const auto signedValue = line.toLongLong(&ok, 10);
-	if (ok) {
+	auto parsedSigned = false;
+	const auto signedValue = line.toLongLong(&parsedSigned, 10);
+	if (parsedSigned) {
 		if (signedValue > 0) {
 			bare.emplace(uint64(signedValue));
 			return true;
 		} else if (signedValue < 0) {
 			if (line.startsWith(u"-100"_q)) {
-				const auto channelId = line.mid(4).toULongLong(&ok, 10);
-				if (ok && channelId) {
+				auto parsedChannel = false;
+				const auto channelId = line.mid(4).toULongLong(
+					&parsedChannel,
+					10);
+				if (parsedChannel && channelId) {
 					bare.emplace(channelId);
 					return true;
 				}
 				return false;
 			}
-			const auto bareValue = line.mid(1).toULongLong(&ok, 10);
-			if (ok && bareValue) {
+			auto parsedMagnitude = false;
+			const auto bareValue = line.mid(1).toULongLong(
+				&parsedMagnitude,
+				10);
+			if (parsedMagnitude && bareValue) {
 				bare.emplace(bareValue);
 				return true;
 			}
 			return false;
 		}
 	}
-	const auto value = line.toULongLong(&ok, 10);
-	if (!ok || !value) {
+	auto parsedUnsigned = false;
+	const auto value = line.toULongLong(&parsedUnsigned, 10);
+	if (!parsedUnsigned || !value) {
 		return false;
 	}
 	if (value > PeerId::kChatTypeMask) {
@@ -5377,11 +5384,11 @@ void Session::loadDialogsAllowedChatIds() {
 	_dialogsAllowedBareChatIds.clear();
 	_dialogsAllowedPeerIds.clear();
 	_dialogsAllowedIdsEnabled = false;
-	const auto configured = OptionDialogsAllowedChatsFile.value().trimmed();
-	if (configured.isEmpty()) {
+	const auto configuredPath = OptionDialogsAllowedChatsFile.value().trimmed();
+	if (configuredPath.isEmpty()) {
 		return;
 	}
-	auto path = configured;
+	auto path = configuredPath;
 	if (QDir::isRelativePath(path)) {
 		path = QDir(cWorkingDir()).filePath(path);
 	}
@@ -5390,10 +5397,10 @@ void Session::loadDialogsAllowedChatIds() {
 		LOG(("Dialogs allowlist: failed to open '%1'.").arg(path));
 		return;
 	}
-	auto stream = QTextStream(&file);
+	auto fileStream = QTextStream(&file);
 	auto invalidCount = 0;
-	while (!stream.atEnd()) {
-		const auto line = stream.readLine().trimmed();
+	while (!fileStream.atEnd()) {
+		const auto line = fileStream.readLine().trimmed();
 		if (line.isEmpty() || line.startsWith(u"#"_q)) {
 			continue;
 		}
