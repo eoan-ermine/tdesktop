@@ -101,43 +101,46 @@ base::options::option<QString> OptionDialogsAllowedChatsFile({
 
 using ViewElement = HistoryView::Element;
 
-void AddDialogsAllowedChatId(
+[[nodiscard]] bool AddDialogsAllowedChatId(
 		const QString &line,
 		base::flat_set<uint64> &bare,
 		base::flat_set<uint64> &peer) {
 	if (line.isEmpty() || line.startsWith(u"#"_q)) {
-		return;
+		return false;
 	}
 	auto ok = false;
 	const auto signedValue = line.toLongLong(&ok, 10);
 	if (ok) {
 		if (signedValue > 0) {
 			bare.emplace(uint64(signedValue));
-			return;
+			return true;
 		} else if (signedValue < 0) {
 			if (line.startsWith(u"-100"_q)) {
 				const auto channelId = line.mid(4).toULongLong(&ok, 10);
 				if (ok && channelId) {
 					bare.emplace(channelId);
+					return true;
 				}
-				return;
+				return false;
 			}
 			const auto bareValue = line.mid(1).toULongLong(&ok, 10);
 			if (ok && bareValue) {
 				bare.emplace(bareValue);
+				return true;
 			}
-			return;
+			return false;
 		}
 	}
 	const auto value = line.toULongLong(&ok, 10);
 	if (!ok || !value) {
-		return;
+		return false;
 	}
 	if (value > PeerId::kChatTypeMask) {
 		peer.emplace(value);
 	} else {
 		bare.emplace(value);
 	}
+	return true;
 }
 
 // s: box 100x100
@@ -5337,7 +5340,7 @@ bool Session::isDialogsEntryAllowed(not_null<Dialogs::Entry*> entry) const {
 		return true;
 	}
 	const auto peerId = history->peer->id.value;
-	const auto bareId = (peerId & PeerId::kChatTypeMask);
+	const auto bareId = uint64(peerToBareMTPInt(history->peer->id).v);
 	return _dialogsAllowedPeerIds.contains(peerId)
 		|| _dialogsAllowedBareChatIds.contains(bareId);
 }
@@ -5384,14 +5387,27 @@ void Session::loadDialogsAllowedChatIds() {
 	}
 	auto file = QFile(path);
 	if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		LOG(("Dialogs allowlist: failed to open '%1'.").arg(path));
 		return;
 	}
 	auto stream = QTextStream(&file);
+	auto invalidCount = 0;
 	while (!stream.atEnd()) {
-		AddDialogsAllowedChatId(
-			stream.readLine().trimmed(),
+		const auto line = stream.readLine().trimmed();
+		if (line.isEmpty() || line.startsWith(u"#"_q)) {
+			continue;
+		}
+		if (!AddDialogsAllowedChatId(
+			line,
 			_dialogsAllowedBareChatIds,
-			_dialogsAllowedPeerIds);
+			_dialogsAllowedPeerIds)) {
+			++invalidCount;
+		}
+	}
+	if (invalidCount > 0) {
+		LOG(("Dialogs allowlist: skipped %1 invalid ids from '%2'.").arg(
+			invalidCount
+		).arg(path));
 	}
 	_dialogsAllowedIdsEnabled = !_dialogsAllowedBareChatIds.empty()
 		|| !_dialogsAllowedPeerIds.empty();
