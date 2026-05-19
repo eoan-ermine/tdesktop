@@ -101,11 +101,11 @@ base::options::option<QString> OptionDialogsVisibleChatsFile({
 
 using ViewElement = HistoryView::Element;
 
-void AddDialogsVisibleChatId(
+	void AddDialogsVisibleChatId(
 		const QString &line,
 		base::flat_set<uint64> &bare,
 		base::flat_set<uint64> &peer) {
-	if (line.isEmpty() || line.startsWith(u'#')) {
+	if (line.isEmpty() || line.startsWith(u"#"_q)) {
 		return;
 	}
 	auto ok = false;
@@ -5380,7 +5380,7 @@ void Session::loadDialogsVisibleChatIds() {
 	}
 	auto path = configured;
 	if (QDir::isRelativePath(path)) {
-		path = cWorkingDir() + path;
+		path = QDir(cWorkingDir()).filePath(path);
 	}
 	auto file = QFile(path);
 	if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
