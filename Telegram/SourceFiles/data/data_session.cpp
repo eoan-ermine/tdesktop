@@ -105,41 +105,38 @@ using ViewElement = HistoryView::Element;
 		const QString &line,
 		base::flat_set<uint64> &bare,
 		base::flat_set<uint64> &peer) {
-	if (line.isEmpty() || line.startsWith(u"#"_q)) {
-		return false;
-	}
-	auto parsedSigned = false;
-	const auto signedValue = line.toLongLong(&parsedSigned, 10);
-	if (parsedSigned) {
+	auto signedParseSucceeded = false;
+	const auto signedValue = line.toLongLong(&signedParseSucceeded, 10);
+	if (signedParseSucceeded) {
 		if (signedValue > 0) {
 			bare.emplace(uint64(signedValue));
 			return true;
 		} else if (signedValue < 0) {
 			if (line.startsWith(u"-100"_q)) {
-				auto parsedChannel = false;
+				auto channelParseSucceeded = false;
 				const auto channelId = line.mid(4).toULongLong(
-					&parsedChannel,
+					&channelParseSucceeded,
 					10);
-				if (parsedChannel && channelId) {
+				if (channelParseSucceeded && channelId) {
 					bare.emplace(channelId);
 					return true;
 				}
 				return false;
 			}
-			auto parsedMagnitude = false;
+			auto magnitudeParseSucceeded = false;
 			const auto bareValue = line.mid(1).toULongLong(
-				&parsedMagnitude,
+				&magnitudeParseSucceeded,
 				10);
-			if (parsedMagnitude && bareValue) {
+			if (magnitudeParseSucceeded && bareValue) {
 				bare.emplace(bareValue);
 				return true;
 			}
 			return false;
 		}
 	}
-	auto parsedUnsigned = false;
-	const auto value = line.toULongLong(&parsedUnsigned, 10);
-	if (!parsedUnsigned || !value) {
+	auto unsignedParseSucceeded = false;
+	const auto value = line.toULongLong(&unsignedParseSucceeded, 10);
+	if (!unsignedParseSucceeded || !value) {
 		return false;
 	}
 	if (value > PeerId::kChatTypeMask) {
