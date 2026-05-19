@@ -95,7 +95,7 @@ constexpr auto kNextForUpgradeGiftTimeout = 5 * crl::time(1000);
 base::options::option<QString> OptionDialogsAllowedChatsFile({
 	.id = "dialogs-allowed-chats-file",
 	.name = "Dialogs allowed chats file",
-	.description = "Path to file with chat ids shown in dialogs list."
+	.description = "Path to file with chat IDs shown in dialogs list."
 		" One id per line.",
 });
 
@@ -103,13 +103,13 @@ using ViewElement = HistoryView::Element;
 
 [[nodiscard]] bool AddDialogsAllowedChatId(
 		const QString &line,
-		base::flat_set<uint64> &bare,
-		base::flat_set<uint64> &peer) {
+		base::flat_set<uint64> &bareChatIds,
+		base::flat_set<uint64> &peerIds) {
 	auto signedParseSucceeded = false;
 	const auto signedValue = line.toLongLong(&signedParseSucceeded, 10);
 	if (signedParseSucceeded) {
 		if (signedValue > 0) {
-			bare.emplace(uint64(signedValue));
+			bareChatIds.emplace(uint64(signedValue));
 			return true;
 		} else if (signedValue < 0) {
 			if (line.startsWith(u"-100"_q)) {
@@ -118,7 +118,7 @@ using ViewElement = HistoryView::Element;
 					&channelParseSucceeded,
 					10);
 				if (channelParseSucceeded && channelId) {
-					bare.emplace(channelId);
+					bareChatIds.emplace(channelId);
 					return true;
 				}
 				return false;
@@ -128,7 +128,7 @@ using ViewElement = HistoryView::Element;
 				&magnitudeParseSucceeded,
 				10);
 			if (magnitudeParseSucceeded && bareValue) {
-				bare.emplace(bareValue);
+				bareChatIds.emplace(bareValue);
 				return true;
 			}
 			return false;
@@ -141,9 +141,9 @@ using ViewElement = HistoryView::Element;
 		return false;
 	}
 	if (value > PeerId::kChatTypeMask) {
-		peer.emplace(value);
+		peerIds.emplace(value);
 	} else {
-		bare.emplace(value);
+		bareChatIds.emplace(value);
 	}
 	return true;
 }
@@ -5392,7 +5392,8 @@ void Session::loadDialogsAllowedChatIds() {
 	}
 	auto file = QFile(path);
 	if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-		LOG(("Dialogs allowlist: failed to open '%1'.").arg(path));
+		LOG(("Dialogs allowed chats file: failed to open '%1'"
+			" (check that it exists and is readable).").arg(path));
 		return;
 	}
 	auto fileStream = QTextStream(&file);
@@ -5410,14 +5411,14 @@ void Session::loadDialogsAllowedChatIds() {
 		}
 	}
 	if (invalidCount > 0) {
-		LOG(("Dialogs allowed chats file: skipped %1 invalid ids from '%2'.").arg(
+		LOG(("Dialogs allowed chats file: skipped %1 invalid IDs from '%2'.").arg(
 			invalidCount
 		).arg(path));
 	}
 	_dialogsAllowedIdsEnabled = !_dialogsAllowedBareChatIds.empty()
 		|| !_dialogsAllowedPeerIds.empty();
 	if (!_dialogsAllowedIdsEnabled) {
-		LOG(("Dialogs allowed chats file: no valid ids loaded from '%1'.").arg(
+		LOG(("Dialogs allowed chats file: no valid IDs loaded from '%1'.").arg(
 			path));
 	}
 }
